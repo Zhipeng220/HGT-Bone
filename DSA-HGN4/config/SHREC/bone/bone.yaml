@@ -1,0 +1,106 @@
+work_dir: ./work_dir/SHREC/bone_fusion
+
+# 1. 训练流设置
+stream: bone
+
+# 2. 模型定义
+model: net.dsa_hgn.Model
+model_args:
+  # [Core Change] 使用 8 通道几何特征输入
+  in_channels: 8
+
+  # [Structure]
+  base_channels: 64
+  num_class: 14
+  num_person: 1
+
+  # [Graph & Topology]
+  # 必须使用 shrec_line 以匹配 21 个骨骼节点的定义
+  graph: graph.shrec_line.Graph
+  graph_args:
+    labeling_mode: 'spatial'
+  num_point: 21           # 显式指定 21，确保穿透到底层 Mask 生成
+
+  # [Hypergraph Settings]
+  num_hyperedges: 8       # 动态边减少为 8 (配合 5 个物理边)
+  k_neighbors: 4
+  adaptive: true
+  use_virtual_conn: True
+
+  # [DSA-HGN Specific]
+  num_stages: 10
+  inflate_stages: [5, 8]
+  down_stages: [5, 8]
+  data_bn_type: 'VC'
+  drop_out: 0.0
+
+# 3. 数据加载
+# [Critical Fix] 必须使用 HGT 的 Feeder 才能计算 8 通道特征
+train_feeder: feeder.feeder_hgt.Feeder
+test_feeder: feeder.feeder_hgt.Feeder
+
+train_feeder_args:
+  data_path: /Users/gzp/Desktop/exp/DATA/SHREC2017_data/train_data.npy
+  label_path: /Users/gzp/Desktop/exp/DATA/SHREC2017_data/train_label.pkl
+  split: train
+  random_choose: True
+  random_move: False
+  random_shift: False
+  random_rot: True        # 增加旋转增强
+  repeat: 5
+  normalization: False
+  debug: False
+  use_mmap: True
+  window_size: 180
+
+  # [8-Channel Feature Generation Args]
+  use_sg: True            # 开启骨骼几何特征计算
+  sg_window: 9
+  sg_order: 2
+  use_angles: True        # 计算角度
+  use_rotations: True     # 计算旋转四元数/轴角
+
+test_feeder_args:
+  data_path: /Users/gzp/Desktop/exp/DATA/SHREC2017_data/val_data.npy
+  label_path: /Users/gzp/Desktop/exp/DATA/SHREC2017_data/val_label.pkl
+  split: test
+  normalization: False
+  debug: False
+  use_mmap: True
+  window_size: 180
+
+  # [8-Channel Feature Generation Args]
+  use_sg: True
+  sg_window: 9
+  sg_order: 2
+  use_angles: True
+  use_rotations: True
+
+# 4. 优化器
+optimizer: SGD
+base_lr: 0.05
+weight_decay: 0.0005
+nesterov: True
+grad_clip_norm: 1.0
+
+# 学习率调度
+lr_decay_rate: 0.1
+step: [30, 50]
+warm_up_epoch: 5
+num_epoch: 60
+
+# 5. 硬件与 Batch
+device: [0]
+batch_size: 32
+test_batch_size: 32
+num_worker: 4
+
+# 6. 损失函数
+loss: torch.nn.CrossEntropyLoss
+lambda_entropy: 0.001
+lambda_ortho: 0.1
+lambda_physical: 0.0      # [New] HGT-Bone 物理约束权重
+
+log_interval: 100
+save_interval: 5
+eval_interval: 5

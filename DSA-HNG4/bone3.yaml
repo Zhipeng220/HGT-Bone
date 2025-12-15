@@ -1,0 +1,191 @@
+# ============================================================
+# DSA-HGN Bone Stream Configuration - SGD Optimized Version
+# ============================================================
+# 针对SGD优化器的稳定训练配置
+# 主要修改:
+# 1. 降低base_lr从0.1到0.05
+# 2. 启用Nesterov动量
+# 3. 延长warmup期
+# 4. 调整超图损失权重
+# 5. 增强正则化
+# ============================================================
+
+work_dir: ./work_dir/SHREC/bone3_sgd_optimized
+
+# ============================================================
+# 模型配置
+# ============================================================
+model: net.dsa_hgn.Model
+model_args:
+  in_channels: 10                    # HGT特征维度 (bone_vec=3 + bone_len=1 + angle=1 + rot_axis=3 + vel_norm=1 + acc_norm=1)
+  base_channels: 48                  # 基础通道数
+  num_class: 14                      # SHREC 2017类别数
+  num_person: 1                      # 单人手势
+  graph: graph.shrec_line.Graph      # 线图拓扑 (21个骨骼节点)
+  graph_args:
+    labeling_mode: spatial
+  num_point: 21                      # 骨骼数量
+  num_hyperedges: 16                 # 动态超边数量
+  k_neighbors: 4
+  adaptive: True
+  use_virtual_conn: True
+  num_stages: 10
+  inflate_stages: [6, 9]
+  down_stages: [6, 9]
+  data_bn_type: 'VC'
+  drop_out: 0.0                      # ⬆️ 从0.25提高到0.3 (增强正则化)
+  temperature: 0.12                  # 超图温度初始值
+
+# ============================================================
+# 权重加载
+# ============================================================
+weights: null
+ignore_weights: []
+
+# ============================================================
+# 数据配置
+# ============================================================
+# 训练集配置
+train_feeder: feeder.feeder_hgt.Feeder
+train_feeder_args:
+  data_path: /Users/gzp/Desktop/exp/DATA/SHREC2017_data/train_data.npy
+  label_path: /Users/gzp/Desktop/exp/DATA/SHREC2017_data/train_label.pkl
+  split: train
+  random_choose: True                # 随机时间窗口采样
+  random_shift: True                 # 时序平移
+  random_rot: True                   # 空间旋转
+  random_move: True                  # 空间平移
+  repeat: 3                          # 数据重复3倍
+  normalization: True                # 启用归一化
+  window_size: 180                   # 时间窗口长度
+  debug: False
+  use_mmap: True
+
+  # HGT特征提取参数
+  use_sg: True                       # Savitzky-Golay滤波
+  sg_window: 9
+  sg_order: 2
+  use_angles: True                   # 骨骼夹角
+  use_rotations: True                # 旋转轴
+  use_velocity: True                 # 速度特征
+
+  # 数据增强参数 (针对SGD略微降低强度)
+  noise_std: 0.002                   # ⬇️ 从0.003降到0.002
+  joint_drop_prob: 0.025             # ⬇️ 从0.03降到0.025
+  time_warp_prob: 0.10               # ⬇️ 从0.12降到0.10
+
+  # 渐进式增强
+  progressive_augment: True
+  warmup_epochs: 10                  # ⬆️ 从5延长到10
+
+# 验证集配置
+test_feeder: feeder.feeder_hgt.Feeder
+test_feeder_args:
+  data_path: /Users/gzp/Desktop/exp/DATA/SHREC2017_data/val_data.npy
+  label_path: /Users/gzp/Desktop/exp/DATA/SHREC2017_data/val_label.pkl
+  split: test
+  debug: False
+  use_mmap: True
+  normalization: True                # 使用训练集统计量
+  window_size: 180
+
+  # HGT特征提取参数 (与训练集一致)
+  use_sg: True
+  sg_window: 9
+  sg_order: 2
+  use_angles: True
+  use_rotations: True
+  use_velocity: True
+
+  # 验证集不使用增强
+  noise_std: 0.0
+  joint_drop_prob: 0.0
+  time_warp_prob: 0.0
+  use_mixup: False
+
+# ============================================================
+# 训练配置
+# ============================================================
+# 基础设置
+phase: train
+device: [0]
+use_gpu: True
+batch_size: 32
+test_batch_size: 32
+num_worker: 4
+debug: False
+
+# 训练轮数
+num_epoch: 150
+start_epoch: 0
+
+# ============================================================
+# SGD优化器配置 (核心修改)
+# ============================================================
+optimizer: SGD
+base_lr: 0.05                        # ⬇️ 关键修改: 从0.1降到0.05
+nesterov: True                       # ⬆️ 关键修改: 启用Nesterov加速
+weight_decay: 0.01                   # ⬆️ 从0.008提高到0.01
+
+# 学习率调度
+warm_up_epoch: 10                    # ⬆️ 从5延长到10
+step: [25, 50, 80, 110]              # ⬆️ 更早、更频繁的衰减
+lr_decay_rate: 0.5                   # ⬆️ 从0.25改为0.5 (更温和)
+
+# ============================================================
+# 损失函数权重 (针对SGD调整)
+# ============================================================
+# 分类损失
+label_smoothing: 0.1                 # Label Smoothing
+
+# 超图正则化损失
+lambda_entropy: 0.02                 # ⬇️ 从0.03降到0.02
+lambda_ortho: 0.01                   # ⬇️ 关键修改: 从0.03降到0.01
+lambda_physical: 0.03                # ⬇️ 从0.05降到0.03
+
+# 辅助任务损失
+lambda_reg: 0.01                     # ⬇️ 从0.015降到0.01 (坐标回归)
+lambda_bone: 0.01                    # ⬇️ 从0.015降到0.01 (方向一致性)
+lambda_sparsity: 0.0                 # 保留接口
+
+# ============================================================
+# 数据增强 - Mixup
+# ============================================================
+use_mixup: True
+mixup_alpha: 0.2
+
+# ============================================================
+# 训练技巧
+# ============================================================
+# 梯度裁剪
+grad_clip_norm: 0.5                  # ⬇️ 从1.0降到0.5 (更严格)
+
+# 早停机制
+patience: 20                         # 20个epoch无提升则停止
+min_epoch_before_stop: 35            # 至少训练35个epoch
+overfit_ratio_threshold: 5.0         # 过拟合监控阈值
+
+# ============================================================
+# 日志与保存
+# ============================================================
+save_interval: 1                     # 每1个epoch保存一次
+eval_interval: 1                     # 每1个epoch评估一次
+save_result: True
+log_interval: 100                    # 每100个batch打印一次
+print_log: True
+save_log: True
+pavi_log: False
+
+# 评估指标
+show_topk: [1, 5]
+
+# ============================================================
+# 数据流类型
+# ============================================================
+stream: bone                         # 骨骼流 (bone vector预测)
+
+# ============================================================
+# 废弃参数 (保留兼容性)
+# ============================================================
+mining_epoch: 1000000
+topk: 1
